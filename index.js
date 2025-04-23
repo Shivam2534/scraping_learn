@@ -1,6 +1,3 @@
-// --------------------------------------
-import fs from "fs";
-import axios from "axios";
 // Function to extract user data from the API response
 function extractUserData(jsonData) {
   const users = [];
@@ -52,16 +49,18 @@ function extractUserData(jsonData) {
 // Function to fetch reaction data
 async function fetchData(userPostURN) {
   const postUrn = userPostURN.replaceAll(":", "%3A");
-  const count = 20;
+  const count = 100; // max 100 at a time
   const start = 0;
   try {
-    const res = await axios.get(
+    const res = await fetch(
       `https://www.linkedin.com/voyager/api/graphql?variables=(count:${count},start:${start},threadUrn:${postUrn})&queryId=voyagerSocialDashReactions.78a64a3508374043e1d8c20396164408`,
       {
+        method: "GET",
         headers: {
-          "csrf-token": "",
-          Cookie:
-            '',
+          "csrf-token": document.cookie.match(
+            /JSESSIONID="(ajax:\d+[^"]*)"/
+          )?.[1],
+          Cookie: document.cookie,
           Accept: "application/vnd.linkedin.normalized+json+2.1",
           "User-Agent":
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -69,21 +68,19 @@ async function fetchData(userPostURN) {
       }
     );
 
-    console.log("Response received");
-    const users = extractUserData(res.data);
+    const data = await res.json();
+
+    console.log("Response received", data);
+    const users = extractUserData(data);
 
     if (users.length === 0) {
       console.log("No user data extracted. Response structure may differ.");
       console.log("Raw response:", JSON.stringify(res.data, null, 2));
       return;
     }
-    // Save user data to a file
-    fs.writeFileSync(
-      "extracted_users.json",
-      JSON.stringify(users, null, 2),
-      "utf8"
-    );
-    console.log("User data saved to extracted_users.json");
+
+    // logging data to the consol
+    console.log("Users who liked on this post:", users);
   } catch (error) {
     console.error("Error fetching data:");
     if (error.response) {
@@ -95,5 +92,22 @@ async function fetchData(userPostURN) {
   }
 }
 
-const userPostURN = "urn:li:activity:7286699430873903105";
-fetchData(userPostURN);
+// Start of script
+const postURL =
+  "https://www.linkedin.com/posts/yash-kumar-yadav-676709237_mongodb-mongodblocal-learningjourney-activity-7240296448490151936-6i7C/?utm_source=share&utm_medium=member_desktop&rcm=ACoAADsMc3EBtjvELjPVNjgyqVdmM4Gyr8ovFYk" ||
+  window.location.href;
+const isUrnExist = postURL.includes("/feed/update/urn:li:activity:");
+let postURN = "";
+
+if (isUrnExist) {
+  const postURlArr = postURL.split("/");
+  postURN = postURlArr[postURlArr.length - 2];
+} else {
+  const match = postURL.match(/activity-(\d+)-/);
+  const activityId = match ? match[1] : null;
+  postURN = activityId ? `urn:li:activity:${activityId}` : null;
+}
+
+console.log("postURN-", postURN);
+
+fetchData(postURN);
