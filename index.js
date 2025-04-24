@@ -22,7 +22,7 @@ function extractUserData(jsonData) {
         profile_picture: "N/A",
       };
 
-      // Extract profile picture URL (e.g., 200x200 size)
+      // Extract profile picture URL
       const imageAttributes = reactor.image?.attributes || [];
       for (const attr of imageAttributes) {
         const vectorImage =
@@ -48,7 +48,8 @@ function extractUserData(jsonData) {
 
 // Function to fetch reaction data
 async function fetchData(userPostURN) {
-  const postUrn = userPostURN.replaceAll(":", "%3A");
+  const postUrn1 = userPostURN.replaceAll(":", "%3A");
+  const postUrn = `urn%3Ali%3A${postUrn1}`;
   const count = 100; // max 100 at a time
   const start = 0;
   try {
@@ -70,7 +71,6 @@ async function fetchData(userPostURN) {
 
     const data = await res.json();
 
-    console.log("Response received", data);
     const users = extractUserData(data);
 
     if (users.length === 0) {
@@ -79,7 +79,7 @@ async function fetchData(userPostURN) {
       return;
     }
 
-    // logging data to the consol
+    // logging data to the console
     console.log("Users who liked on this post:", users);
   } catch (error) {
     console.error("Error fetching data:");
@@ -93,21 +93,34 @@ async function fetchData(userPostURN) {
 }
 
 // Start of script
-const postURL =
-  "https://www.linkedin.com/posts/yash-kumar-yadav-676709237_mongodb-mongodblocal-learningjourney-activity-7240296448490151936-6i7C/?utm_source=share&utm_medium=member_desktop&rcm=ACoAADsMc3EBtjvELjPVNjgyqVdmM4Gyr8ovFYk" ||
-  window.location.href;
-const isUrnExist = postURL.includes("/feed/update/urn:li:activity:");
-let postURN = "";
-
-if (isUrnExist) {
-  const postURlArr = postURL.split("/");
-  postURN = postURlArr[postURlArr.length - 2];
-} else {
-  const match = postURL.match(/activity-(\d+)-/);
-  const activityId = match ? match[1] : null;
-  postURN = activityId ? `urn:li:activity:${activityId}` : null;
+function getCommentId() {
+  let commentContainer = document?.body?.querySelector(
+    "div.feed-shared-update-v2__comments-container"
+  );
+  let commentList = commentContainer?.querySelector(
+    "div.comments-comment-list__container"
+  );
+  let allComments = Array.from(
+    commentList?.querySelectorAll(":scope > article.comments-comment-entity") ||
+      []
+  );
+  let comment = allComments[0];
+  const commentDataId = comment?.getAttribute("data-id");
+  return commentDataId;
 }
 
-console.log("postURN-", postURN);
+function extractUrnParts(urn) {
+  const match = urn.match(/urn:li:comment:\(([^,]+),([^)]+)\)/);
+  if (!match) return null;
 
-fetchData(postURN);
+  const [_, postUrn, commentId] = match;
+  return {
+    postUrn,
+    commentId,
+  };
+}
+const urn = getCommentId();
+
+const postUrn = extractUrnParts(urn);
+
+fetchData(postUrn.postUrn);
