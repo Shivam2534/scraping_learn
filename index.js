@@ -1,66 +1,52 @@
-// Function to extract user data from the API response
-function extractUserData(jsonData) {
-  const users = [];
+let allComments = [];
 
-  // Check if the response has the expected structure
-  if (!jsonData?.included) {
-    console.error('No "included" section found in the response');
-    return users;
+function extractCommentData(data) {
+  if (!Array.isArray(data)) {
+    console.error("Input data must be an array");
+    return [];
   }
 
-  // Iterate through the 'included' section
-  jsonData.included.forEach((item) => {
-    if (item["$type"] === "com.linkedin.voyager.dash.social.Reaction") {
-      const reactor = item.reactorLockup || {};
-      const userData = {
-        name: reactor.title?.text || "N/A",
-        headline: reactor.subtitle?.text || "N/A",
-        profile_url: reactor.navigationUrl || "N/A",
-        connection_degree: reactor.label?.text || "N/A",
-        reaction_type: item.reactionType || "N/A",
-        profile_urn: item.actor?.["*profileUrn"] || "N/A",
-        profile_picture: "N/A",
-      };
-
-      // Extract profile picture URL
-      const imageAttributes = reactor.image?.attributes || [];
-      for (const attr of imageAttributes) {
-        const vectorImage =
-          attr.detailData?.nonEntityProfilePicture?.vectorImage || {};
-        const artifacts = vectorImage.artifacts || [];
-        for (const artifact of artifacts) {
-          if (artifact.width === 200) {
-            userData.profile_picture = `${vectorImage.rootUrl || ""}${
-              artifact.fileIdentifyingUrlPathSegment
-            }`;
-            break;
-          }
-        }
-        if (userData.profile_picture !== "N/A") break;
+  return data
+    .map((obj) => {
+      if (obj?.$type !== "com.linkedin.voyager.dash.social.Comment") {
+        return null;
       }
 
-      users.push(userData);
-    }
-  });
+      const commenter = obj.commenter || {};
+      const commentary = obj.commentary || {};
 
-  return users;
+      const user = {
+        userName: commenter.title?.text || "Unknown",
+        jobTitle: commenter.subtitle || "Unknown",
+        profileUrl: commenter.navigationUrl || "Unknown",
+        commentText: commentary.text || "No comment",
+        commentUrn: obj.entityUrn || "Unknown",
+      };
+
+      allComments.push(user);
+      return user;
+    })
+    .filter((comment) => comment !== null);
 }
 
-// Function to fetch reaction data
-async function fetchData(userPostURN) {
-  const postUrn1 = userPostURN.replaceAll(":", "%3A");
+async function fetchData(userPostURN, postId, start, count, reply) {
+  const postUrn1 = userPostURN?.replaceAll(":", "%3A") || "";
+  const postId1 = postId?.replaceAll(":", "%3A") || "";
   const postUrn = `urn%3Ali%3A${postUrn1}`;
-  const count = 100; // max 100 at a time
-  const start = 0;
+
+  if (!postUrn || !postId) {
+    console.error("Invalid postUrn or postId:", { postUrn, postId });
+    return;
+  }
+
   try {
     const res = await fetch(
-      `https://www.linkedin.com/voyager/api/graphql?variables=(count:${count},start:${start},threadUrn:${postUrn})&queryId=voyagerSocialDashReactions.78a64a3508374043e1d8c20396164408`,
+      `https://www.linkedin.com/voyager/api/graphql?includeWebMetadata=true&variables=(count:${count},numReplies:${reply},socialDetailUrn:urn%3Ali%3Afsd_socialDetail%3A%28${postUrn}%2C${postId1}%2Curn%3Ali%3AhighlightedReply%3A-%29,sortOrder:RELEVANCE,start:${start})&queryId=voyagerSocialDashComments.95ed44bc87596acce7c460c70934d0ff`,
       {
         method: "GET",
         headers: {
-          "csrf-token": document.cookie.match(
-            /JSESSIONID="(ajax:\d+[^"]*)"/
-          )?.[1],
+          "csrf-token":
+            document.cookie.match(/JSESSIONID="(ajax:\d+[^"]*)"/)?.[1] || "",
           Cookie: document.cookie,
           Accept: "application/vnd.linkedin.normalized+json+2.1",
           "User-Agent":
@@ -69,58 +55,103 @@ async function fetchData(userPostURN) {
       }
     );
 
-    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(`HTTP error! status: ${res.status}`);
+    }
 
-    const users = extractUserData(data);
+    const data = await res.json();
+    // Use data.included if it exists, otherwise fallback to data
+    const commentsData = Array.isArray(data.included) ? data.included : [];
+    const users = extractCommentData(commentsData);
 
     if (users.length === 0) {
-      console.log("No user data extracted. Response structure may differ.");
-      console.log("Raw response:", JSON.stringify(res.data, null, 2));
+      console.log("No comments found in this batch");
       return;
     }
 
-    // logging data to the console
-    console.log("Users who liked on this post:", users);
+    console.log("Users who commented on this post:", users);
   } catch (error) {
-    console.error("Error fetching data:");
+    console.error("Error fetching data:", error.message);
     if (error.response) {
       console.error(`Status: ${error.response.status}`);
       console.error(`Data: ${JSON.stringify(error.response.data, null, 2)}`);
-    } else {
-      console.error(error.message);
     }
   }
 }
 
-// Start of script
 function getCommentId() {
-  let commentContainer = document?.body?.querySelector(
+  const commentContainer = document?.body?.querySelector(
     "div.feed-shared-update-v2__comments-container"
   );
-  let commentList = commentContainer?.querySelector(
+  const commentList = commentContainer?.querySelector(
     "div.comments-comment-list__container"
   );
-  let allComments = Array.from(
+  const allComments = Array.from(
     commentList?.querySelectorAll(":scope > article.comments-comment-entity") ||
       []
   );
-  let comment = allComments[0];
-  const commentDataId = comment?.getAttribute("data-id");
-  return commentDataId;
+  const comment = allComments[0];
+  return comment?.getAttribute("data-id") || null;
 }
 
 function extractUrnParts(urn) {
-  const match = urn.match(/urn:li:comment:\(([^,]+),([^)]+)\)/);
-  if (!match) return null;
-
-  const [_, postUrn, commentId] = match;
-  return {
-    postUrn,
-    commentId,
-  };
+  const match = urn?.match(/urn:li:comment:\(([^,]+),([^)]+)\)/) || [];
+  return match.length > 2 ? { postUrn: match[1], commentId: match[2] } : null;
 }
-const urn = getCommentId();
 
-const postUrn = extractUrnParts(urn);
+function getUpdateUrn() {
+  const el = document.querySelector(
+    "div.full-height[data-view-tracking-scope]"
+  );
+  if (!el) return null;
 
-fetchData(postUrn.postUrn);
+  const scope = el.getAttribute("data-view-tracking-scope");
+  try {
+    const parsed = JSON.parse(scope.replace(/"/g, '"'));
+    return parsed?.[0]?.breadcrumb?.updateUrn || null;
+  } catch (e) {
+    console.error("Failed to parse data-view-tracking-scope:", e);
+    return null;
+  }
+}
+
+function getCommentCount() {
+  const btn = document.querySelector(
+    'button[aria-label*="comments"].social-details-social-counts__btn'
+  );
+  if (!btn) return 0;
+
+  const text = btn.getAttribute("aria-label") || "";
+  const match = text.match(/([\d,]+)\s+comments/i);
+  if (!match) return 0;
+
+  return parseInt(match[1].replace(/,/g, ""), 10);
+}
+
+async function fetchAllComments() {
+  const urn = getCommentId();
+  const postUrnData = extractUrnParts(urn);
+  const postId = getUpdateUrn();
+
+  const count = 100;
+  const reply = 10;
+  let start = 0;
+  let maxComments = getCommentCount();
+
+  const pages = Math.ceil(maxComments / count);
+
+  if (postUrnData?.postUrn && postId && maxComments > 0) {
+    for (let i = 0; i < pages; i++) {
+      await fetchData(postUrnData.postUrn, postId, start, count, reply);
+      start += count;
+    }
+  } else {
+    console.log("No comments found");
+  }
+
+  if (allComments.length > 0) {
+    console.log("allComments-", allComments.length, allComments);
+  }
+}
+
+fetchAllComments();
